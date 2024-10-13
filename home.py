@@ -1,11 +1,11 @@
 import streamlit as st
+import cv2
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 from PIL import Image
 import io
 import os
-import zipfile
 from dotenv import load_dotenv
 import plotly.graph_objects as go
 import requests
@@ -115,25 +115,27 @@ def predict_food(img):
     confidence = predictions[0][predicted_class_index]
     return predicted_food_name, confidence
 
-def call_food_analysis_api(food_name):
-    api_url = "https://home-api-z0vu.onrender.com/analyze_food"  # Flask API URL
-    headers = {'Content-Type': 'application/json'}
-    data = {"food_name": food_name}
-
-    response = requests.post(api_url, json=data, headers=headers)
-
+def analyze_food(food_name):
+    # Replace the direct function call with an API request
+    api_url = "https://home-api-z0vu.onrender.com/analyze_food"  # Update this URL if your Flask API is hosted elsewhere
+    response = requests.post(api_url, json={"food_name": food_name})
+    
     if response.status_code == 200:
         return response.json()['analysis']
     else:
-        st.error(f"Error: {response.json().get('error', 'Unknown error occurred.')}")
+        st.error(f"API Error: {response.status_code} - {response.text}")
         return None
 
 def parse_analysis(analysis):
+    if analysis is None:
+        return [], [], "Unknown"
+    
     lines = analysis.split('\n')
     ingredients = lines[0].split(': ')[1].split('|')
     health_scores = [int(score) for score in lines[1].split(': ')[1].split('|')]
     overall_health = lines[2].split(': ')[1]
     return ingredients, health_scores, overall_health
+
 
 def create_health_chart(ingredients, health_scores):
     colors = ['#EF4444' if score < 4 else '#F59E0B' if score < 7 else '#10B981' for score in health_scores]
@@ -198,40 +200,106 @@ def display_food_analysis(food_name):
     st.subheader(f"Analyzing: {food_name}")
     
     with st.spinner("Analyzing food safety and health risks..."):
-        analysis = call_food_analysis_api(food_name)
-    
-    if analysis:
-        ingredients, health_scores, overall_health = parse_analysis(analysis)
-
-        fig = create_health_chart(ingredients, health_scores)
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Handle case where overall_health is not a number
         try:
-            overall_health = int(overall_health)
-            overall_category, color = get_health_category(overall_health)
-            st.markdown(f"<h3 style='color:{color};text-align:center;'>Overall Health: {overall_category} ({overall_health}/10)</h3>", unsafe_allow_html=True)
-        except ValueError:
-            st.markdown(f"<h3 style='color:#EF4444;text-align:center;'>Overall Health: {overall_health}</h3>", unsafe_allow_html=True)
+            analysis = analyze_food(food_name)
+            ingredients, health_scores, overall_health = parse_analysis(analysis)
 
+            col1, col2 = st.columns([1, 2])
 
-# Streamlit app structure
-st.title("Food Recognition and Health Analyzer")
+            # with col1:
+            #     # Display food image
+            #     food_image = get_food_image(food_name)
+            #     if food_image:
+            #         st.image(food_image, caption=f"Image of {food_name}", use_column_width=True)
+            #     else:
+            #         st.image("https://via.placeholder.com/400x300?text=No+Image+Found", caption="Placeholder Image",
+            #                 use_column_width=True)
 
-uploaded_file = st.file_uploader("Upload an image of food", type=['jpg', 'jpeg', 'png'])
+            #     # Display overall health assessment
+            #     st.subheader("Overall Health Assessment:")
+            #     if overall_health.lower() == 'safe':
+            #         st.success(f"✅ {food_name} is considered SAFE based on its ingredients.")
+            #     else:
+            #         st.error(f"⚠️ {food_name} is considered UNSAFE based on its ingredients.")
 
-if uploaded_file is not None:
-    img = Image.open(uploaded_file)
-    st.image(img, caption='Uploaded Image', use_column_width=True)
+            # with col2:
+            # Display health chart
+            st.plotly_chart(create_health_chart(ingredients, health_scores), use_container_width=True)
 
-    # Predict the food
-    predicted_food_name, confidence = predict_food(img)
-    st.write(f"**Predicted food:** {predicted_food_name} (Confidence: {confidence * 100:.2f}%)")
+            # Display ingredient details with hyperlinks
+            st.subheader("Ingredient Details:")
+            for ingredient, score in zip(ingredients, health_scores):
+                health_category, color = get_health_category(score)
+                st.markdown(f"""
+                <div style="padding: 10px; border-radius: 5px; margin-bottom: 10px; background-color: {color}40;">
+                    <span style="font-weight: bold;">
+                        <a href='https://en.wikipedia.org/wiki/{ingredient.replace(' ', '_')}' target='_blank' style="color: {color};">{ingredient}</a>
+                    </span>: 
+                    <span style="color: {color};">{health_category}</span> (Score: {score}/10)
+                </div>
+                """, unsafe_allow_html=True)
 
-    # Display food image from Pexels
-    food_image = get_food_image(predicted_food_name)
-    if food_image:
-        st.image(food_image, caption=f'{predicted_food_name} from Pexels', use_column_width=True)
+        except Exception as e:
+            st.error(f"An error occurred during analysis: {str(e)}")
 
-    # Display food analysis
-    display_food_analysis(predicted_food_name)
+def main():
+    st.title("🍽️ Food Image Classifier and Health Analyzer")
+    st.write("Upload an image, use your webcam to classify food, or enter a food name for analysis!")
+
+    tab1, tab2 = st.tabs(["🖼️ Image Classification", "✍️ Manual Entry"])
+
+    with tab1:
+        st.header("Image Classification")
+        # File uploader
+        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+            st.image(image, caption='Uploaded Image.', use_column_width=True)
+            st.write("")
+            with st.spinner("Classifying..."):
+                label, confidence = predict_food(image)
+            st.success(f"Prediction: {label}")
+            st.info(f"Confidence: {confidence:.2f}")
+            
+            if st.button("Analyze This Food", key="analyze_uploaded"):
+                display_food_analysis(label)
+
+        # Webcam capture
+        st.subheader("Or use your webcam:")
+        picture = st.camera_input("Take a picture")
+        if picture:
+            image = Image.open(picture)
+            st.image(image, caption='Captured Image.', use_column_width=True)
+            st.write("")
+            with st.spinner("Classifying..."):
+                label, confidence = predict_food(image)
+            st.success(f"Prediction: {label}")
+            st.info(f"Confidence: {confidence:.2f}")
+            
+            if st.button("Analyze This Food", key="analyze_webcam"):
+                display_food_analysis(label)
+
+    with tab2:
+        st.header("Manual Food Entry")
+        food_name = st.text_input("Enter a food item:", "cake")
+        if st.button("Analyze Food", key="analyze_manual"):
+            if food_name:
+                # Generate and display the food image
+                food_image = get_food_image(food_name)
+                if food_image:
+                    st.image(food_image, caption=f"Image of {food_name}", use_column_width=True)
+                else:
+                    st.image("https://via.placeholder.com/400x300?text=No+Image+Found", caption="Placeholder Image",
+                            use_column_width=True)
+                
+                # Display the food analysis
+                display_food_analysis(food_name)
+            else:
+                st.warning("Please enter a food item to analyze.")
+
+    st.markdown("---")
+    st.write("Thank you for using the Food Image Classifier and Health Analyzer!")
+
+if __name__ == '__main__':
+    main()
