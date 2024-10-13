@@ -24,9 +24,6 @@ def main():
     elif page == "Packed Food Analysis":
         st.title("🔎 Packed Food Analysis")
         packed.main()
-    elif page == "Home":
-        st.title("🍽️ Food Image Classifier and Health Analyzer")
-        home.main()
     else:
         st.title("🍽️ AI-Powered Personalized Diet Recommender")
         diet.main()
